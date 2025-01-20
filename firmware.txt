@@ -1,1 +1,563 @@
-Initial commit
+#include <Arduino.h>
+#include <TFT_eSPI.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <SPI.h>
+#include <LoRa.h>
+#include <IRremote.hpp> 
+#inclide "esp_wifi.h"
+
+// Pin definitions for buttons
+#define BUTTON_OK 3  // Run button (OK/Power when held)
+#define BUTTON_LEFT 7  // IO7 (Left)
+#define BUTTON_RIGHT 6  // IO6 (Right)
+
+// IR transmitter pin
+#define IR_TX_PIN 5  // IR transmitter (2-pin)
+
+// LoRa module pin definitions
+#define LORA_SCK 5
+#define LORA_MISO 19
+#define LORA_MOSI 27
+#define LORA_CS 18
+#define LORA_RST 14
+#define LORA_IRQ 26
+
+// Wi-Fi AP credentials
+const char *ssid = "T-PicoC3_Device";
+const char *password = "12345678";
+
+// Display setup
+TFT_eSPI tft = TFT_eSPI();
+AsyncWebServer server(80);
+
+// Menu options
+const char* menuItems[] = {"IR", "Wi-Fi", "LoRa", "Settings"};
+int currentMenuIndex = 0;
+
+void displayBootScreen() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("Loading...", tft.width() / 2, tft.height() - 20);
+
+    if (!SPIFFS.begin(true)) {
+        tft.drawString("SPIFFS Mount Failed!", tft.width() / 2, tft.height() / 2);
+        return;
+    }
+
+    File bmpFile = SPIFFS.open("/boot_screen.bmp", "r");
+    if (!bmpFile) {
+        tft.drawString("Image Not Found!", tft.width() / 2, tft.height() / 2);
+        return;
+    }
+
+    tft.drawBmp("/boot_screen.bmp", 0, 0);
+    bmpFile.close();
+}
+
+void setup() {
+    Serial.begin(115200);
+    tft.init();
+    tft.setRotation(1);
+
+    pinMode(BUTTON_OK, INPUT_PULLUP);
+    pinMode(BUTTON_LEFT, INPUT_PULLUP);
+    pinMode(BUTTON_RIGHT, INPUT_PULLUP);
+    pinMode(IR_TX_PIN, OUTPUT);
+
+    // Display boot screen
+    displayBootScreen();
+    delay(3000);
+
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN);
+    tft.drawString("Welcome!", tft.width() / 2, tft.height() / 2);
+}
+
+void loop() {
+    // Main functionality here
+}
+void displayMenu() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+
+    for (int i = 0; i < 4; i++) {
+        if (i == currentMenuIndex) {
+            tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+        } else {
+            tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        }
+        tft.drawString(menuItems[i], tft.width() / 2, (tft.height() / 2) - 40 + (i * 20));
+    }
+}
+
+void handleMenuNavigation() {
+    static bool buttonLeftPressed = false;
+    static bool buttonRightPressed = false;
+    static bool buttonOkPressed = false;
+
+    if (digitalRead(BUTTON_LEFT) == LOW && !buttonLeftPressed) {
+        currentMenuIndex--;
+        if (currentMenuIndex < 0) {
+            currentMenuIndex = 3;
+        }
+        displayMenu();
+        buttonLeftPressed = true;
+    }
+    if (digitalRead(BUTTON_LEFT) == HIGH) {
+        buttonLeftPressed = false;
+    }
+
+    if (digitalRead(BUTTON_RIGHT) == LOW && !buttonRightPressed) {
+        currentMenuIndex++;
+        if (currentMenuIndex > 3) {
+            currentMenuIndex = 0;
+        }
+        displayMenu();
+        buttonRightPressed = true;
+    }
+    if (digitalRead(BUTTON_RIGHT) == HIGH) {
+        buttonRightPressed = false;
+    }
+
+    if (digitalRead(BUTTON_OK) == LOW && !buttonOkPressed) {
+        selectMenuOption();
+        buttonOkPressed = true;
+    }
+    if (digitalRead(BUTTON_OK) == HIGH) {
+        buttonOkPressed = false;
+    }
+}
+
+void selectMenuOption() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.drawString(String("Selected: ") + menuItems[currentMenuIndex], tft.width() / 2, tft.height() / 2);
+    delay(1000);
+    displayMenu();
+}
+
+void loop() {
+    handleMenuNavigation();
+}
+void handleIR() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawString("IR Mode Active", tft.width() / 2, tft.height() / 2);
+    delay(2000);
+    displayMenu();
+}
+
+void handleWiFi() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_BLUE, TFT_BLACK);
+    tft.drawString("Wi-Fi Mode Active", tft.width() / 2, tft.height() / 2);
+
+    // Start Wi-Fi access point
+    WiFi.softAP(ssid, password);
+    tft.drawString("AP Started!", tft.width() / 2, tft.height() / 2 + 20);
+    delay(2000);
+    displayMenu();
+}
+
+void handleLoRa() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.drawString("LoRa Mode Active", tft.width() / 2, tft.height() / 2);
+
+    // Initialize LoRa module
+    if (!LoRa.begin(433E6)) {
+        tft.drawString("LoRa Init Failed", tft.width() / 2, tft.height() / 2 + 20);
+    } else {
+        tft.drawString("LoRa Ready", tft.width() / 2, tft.height() / 2 + 20);
+    }
+    delay(2000);
+    displayMenu();
+}
+
+void handleSettings() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.drawString("Settings Menu", tft.width() / 2, tft.height() / 2);
+    delay(2000);
+    displayMenu();
+}
+
+void selectMenuOption() {
+    switch (currentMenuIndex) {
+        case 0:
+            handleIR();
+            break;
+        case 1:
+            handleWiFi();
+            break;
+        case 2:
+            handleLoRa();
+            break;
+        case 3:
+            handleSettings();
+            break;
+    }
+}
+#include <IRremote.hpp>
+
+// Function to handle IR transmission
+void sendIRSignal() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawString("Sending IR...", tft.width() / 2, tft.height() / 2);
+
+    IrSender.begin(IR_TX_PIN, ENABLE_LED_FEEDBACK);  // Initialize IR transmitter
+    IrSender.sendNEC(0xF7C03F, 32);  // Example NEC IR code
+
+    tft.drawString("IR Sent!", tft.width() / 2, tft.height() / 2 + 20);
+    delay(2000);
+    displayMenu();
+}
+
+// Wi-Fi deauthentication function
+void startWiFiDeauth() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_BLUE, TFT_BLACK);
+    tft.drawString("Starting Wi-Fi Deauth", tft.width() / 2, tft.height() / 2);
+
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    delay(100);
+
+    tft.drawString("Scanning...", tft.width() / 2, tft.height() / 2 + 20);
+
+    int networks = WiFi.scanNetworks();
+    for (int i = 0; i < networks; i++) {
+        WiFi.deauthPacket(WiFi.BSSID(i), 0);  // Send deauth packets
+    }
+
+    tft.drawString("Deauth Sent!", tft.width() / 2, tft.height() / 2 + 40);
+    delay(2000);
+    displayMenu();
+}
+
+// Function to handle the settings menu
+void handleSettings() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.drawString("Settings:", tft.width() / 2, 20);
+    tft.drawString("1. File Upload: ", 10, 60);
+    tft.drawString("2. Back", 10, 80);
+
+    while (true) {
+        if (digitalRead(BUTTON_LEFT) == LOW) {
+            toggleFileUpload();
+            break;
+        }
+        if (digitalRead(BUTTON_OK) == LOW) {
+            displayMenu();
+            break;
+        }
+    }
+}
+
+// Toggle AP file upload feature
+bool fileUploadEnabled = false;
+
+void toggleFileUpload() {
+    fileUploadEnabled = !fileUploadEnabled;
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+
+    if (fileUploadEnabled) {
+        tft.drawString("File Upload: Enabled", tft.width() / 2, tft.height() / 2);
+        server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(200, "text/html", "<h1>Upload Files</h1>");
+        });
+        server.begin();
+    } else {
+        tft.drawString("File Upload: Disabled", tft.width() / 2, tft.height() / 2);
+        server.end();
+    }
+
+    delay(2000);
+    displayMenu();
+}
+void setup() {
+    // Initialize display
+    tft.init();
+    tft.setRotation(1);
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextDatum(MC_DATUM);
+
+    // Show boot screen
+    showBootScreen();
+    
+    // Initialize IR transmitter
+    IrSender.begin(IR_TX_PIN, ENABLE_LED_FEEDBACK);
+
+    // Initialize LoRa
+    if (!LoRa.begin(433E6)) {
+        tft.drawString("LoRa Init Failed!", tft.width() / 2, tft.height() / 2);
+        delay(2000);
+    } else {
+        tft.drawString("LoRa Ready", tft.width() / 2, tft.height() / 2);
+        delay(1000);
+    }
+
+    // Set button pins as inputs with pull-ups
+    pinMode(BUTTON_LEFT, INPUT_PULLUP);
+    pinMode(BUTTON_RIGHT, INPUT_PULLUP);
+    pinMode(BUTTON_OK, INPUT_PULLUP);
+
+    displayMenu();  // Show the main menu
+}
+
+// Function to display boot screen
+void showBootScreen() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setSwapBytes(true);
+    tft.pushImage((tft.width() - 64) / 2, (tft.height() - 64) / 2, 64, 64, bootScreenBitmap);
+    tft.setTextColor(TFT_WHITE);
+    tft.drawString("Initializing...", tft.width() / 2, tft.height() - 20);
+    delay(2000);
+    tft.fillScreen(TFT_BLACK);
+}
+
+// Bitmap for boot screen image (example placeholder)
+const uint16_t bootScreenBitmap[64 * 64] = {
+    // Image data goes here, converted from the original image to RGB565 format
+};
+
+// Start the web server if file upload is enabled
+void startFileServer() {
+    if (fileUploadEnabled) {
+        server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(200, "text/html", "<h1>File Upload Enabled</h1>");
+        });
+        
+        server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
+            request->send(200, "text/html", "Upload successful");
+        }, handleFileUpload);
+        
+        server.begin();
+    }
+}
+
+// Function to handle file uploads
+void handleFileUpload(AsyncWebServerRequest *request, String filename, size_t index, 
+                      uint8_t *data, size_t len, bool final) {
+    if (!index) {
+        Serial.printf("UploadStart: %s\n", filename.c_str());
+        file = SPIFFS.open("/" + filename, "w");
+    }
+    if (file) {
+        file.write(data, len);
+    }
+    if (final) {
+        Serial.printf("UploadEnd: %s (%u)\n", filename.c_str(), index + len);
+        file.close();
+    }
+}
+void setup() {
+    tft.init();                // Initialize the display
+    tft.setRotation(1);        // Set display rotation
+
+    showBootScreen();          // Display the boot screen
+
+void setup() {
+    tft.init();                
+    tft.setRotation(1);        
+    showBootScreen();         
+    pinMode(BUTTON_LEFT, INPUT_PULLUP);
+    pinMode(BUTTON_RIGHT, INPUT_PULLUP);
+    pinMode(BUTTON_OK, INPUT_PULLUP);
+    displayMenu();           
+}
+    // Initialize other components
+    displayMenu();             // Show the main menu
+}
+
+void loop() {
+    // Main logic goes here
+}
+
+// === PLACE THIS PART AT THE BOTTOM ===
+
+// Boot screen image (64x64, RGB565 format)
+const uint16_t bootScreenBitmap[64 * 64] = {
+    0x942F, 0x942F, 0x9C4F, 0x9C2F, 0x9C4F, 0x9C4F, 0xA470, 0x9C70,
+    0x9C70, 0xA490, 0x9C70, 0x9C70, 0xA490, 0xA4B0, 0xA4B1, 0xA4B0,
+    0xA490, 0xA490, 0xA490, 0xACB1, 0xA4B1, 0xA490, 0xA4B1, 0xA4B0,
+    0xA490, 0xA4B1, 0xACB1, 0xA4B0, 0xACD1, 0xACD1, 0xA4B1, 0xACB0,
+    0xACD1, 0xACF1, 0xACD1, 0xACD1, 0xACF2, 0xACF1, 0xACF1, 0xACF1,
+    0xACF1, 0xACF2, 0xACF1, 0xACD1, 0xACF1, 0xACF1, 0xACF1, 0xACF1,
+    0xB4F2, 0xB512, 0xBD53, 0xC5B4, 0xC5B4, 0xCDF5, 0xD637, 0xD636,
+    0xDE78, 0xE698, 0xE6B9, 0xEED9, 0xEEFA, 0xEF1A, 0xF7F8
+};
+
+// Function to display the boot screen
+void showBootScreen() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setSwapBytes(true);
+    tft.pushImage((tft.width() - 64) / 2, (tft.height() - 64) / 2, 64, 64, bootScreenBitmap);
+    tft.setTextColor(TFT_WHITE);
+    tft.drawString("Initializing...", tft.width() / 2, tft.height() - 20);
+    delay(2000);
+    tft.fillScreen(TFT_BLACK);
+}
+// Define menu items
+const char* menuItems[] = {"IR", "Wi-Fi", "LoRa", "Settings"};
+const int menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
+int currentSelection = 0;
+
+// Function to display the menu
+void displayMenu() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(2);
+
+    for (int i = 0; i < menuItemCount; i++) {
+        if (i == currentSelection) {
+            tft.setTextColor(TFT_BLACK, TFT_WHITE); // Highlight selected item
+        } else {
+            tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        }
+        tft.drawString(menuItems[i], tft.width() / 2, 40 + (i * 30));
+    }
+}
+
+// Function to handle button inputs for menu navigation
+void handleMenuNavigation() {
+    if (digitalRead(BUTTON_LEFT) == LOW) {
+        currentSelection = (currentSelection - 1 + menuItemCount) % menuItemCount;
+        displayMenu();
+        delay(200);  // Debounce delay
+    }
+    if (digitalRead(BUTTON_RIGHT) == LOW) {
+        currentSelection = (currentSelection + 1) % menuItemCount;
+        displayMenu();
+        delay(200);  // Debounce delay
+    }
+    if (digitalRead(BUTTON_OK) == LOW) {
+        executeMenuAction();
+        delay(200);
+    }
+}
+
+// Function to execute selected menu item
+void executeMenuAction() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.drawString(String("Selected: ") + menuItems[currentSelection], tft.width() / 2, tft.height() / 2);
+    delay(1000);
+    displayMenu();
+}
+
+void loop() {
+    handleMenuNavigation();
+}
+void setupIR() {
+    IrSender.begin(IR_LED_PIN);  // Initialize the IR transmitter
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.drawString("IR Module Ready", tft.width() / 2, tft.height() / 2);
+    delay(1000);
+    displayMenu();
+}
+
+void sendIRCode(uint16_t irCode) {
+    tft.fillScreen(TFT_BLACK);
+    tft.drawString("Sending IR Code...", tft.width() / 2, tft.height() / 2);
+
+    IrSender.sendNEC(irCode, 32);  // Example: Sending NEC protocol with 32-bit code
+    delay(500);
+
+    tft.fillScreen(TFT_BLACK);
+    tft.drawString("IR Code Sent!", tft.width() / 2, tft.height() / 2);
+    delay(1000);
+    displayMenu();
+}
+
+// Function to execute selected menu item (updated with IR feature)
+void executeMenuAction() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    
+    switch (currentSelection) {
+        case 0: // IR
+            setupIR();
+            sendIRCode(0x00FFA25D);  // Example IR code (Change as needed)
+            break;
+        case 1: // Wi-Fi
+            tft.drawString("Wi-Fi Selected", tft.width() / 2, tft.height() / 2);
+            delay(1000);
+            break;
+        case 2: // LoRa
+            tft.drawString("LoRa Selected", tft.width() / 2, tft.height() / 2);
+            delay(1000);
+            break;
+        case 3: // Settings
+            tft.drawString("Settings Menu", tft.width() / 2, tft.height() / 2);
+            delay(1000);
+            break;
+    }
+    
+    displayMenu();
+}
+void setupLoRa() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.drawString("Initializing LoRa...", tft.width() / 2, tft.height() / 2);
+    
+    SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
+    LoRa.setPins(LORA_CS, LORA_RST, LORA_IRQ);
+
+    if (!LoRa.begin(433E6)) {  // Set frequency to 433 MHz
+        tft.fillScreen(TFT_BLACK);
+        tft.drawString("LoRa Init Failed", tft.width() / 2, tft.height() / 2);
+        delay(2000);
+        displayMenu();
+        return;
+    }
+
+    LoRa.setTxPower(17, PA_OUTPUT_PA_BOOST_PIN);
+    LoRa.setSpreadingFactor(7);
+    LoRa.setSignalBandwidth(125E3);
+    LoRa.setCodingRate4(5);
+
+    tft.fillScreen(TFT_BLACK);
+    tft.drawString("LoRa Ready!", tft.width() / 2, tft.height() / 2);
+    delay(2000);
+    displayMenu();
+}
+
+void sendLoRaMessage(String message) {
+    tft.fillScreen(TFT_BLACK);
+    tft.drawString("Sending: " + message, tft.width() / 2, tft.height() / 2);
+    
+    LoRa.beginPacket();
+    LoRa.print(message);
+    LoRa.endPacket();
+    
+    delay(500);
+    tft.fillScreen(TFT_BLACK);
+    tft.drawString("Message Sent!", tft.width() / 2, tft.height() / 2);
+    delay(2000);
+    displayMenu();
+}
+
+void receiveLoRaMessage() {
+    int packetSize = LoRa.parsePacket();
+    if (packetSize) {
+        String received = "";
+        while (LoRa.available()) {
+            received += (char)LoRa.read();
+        }
+
+        tft.fillScreen(TFT_BLACK);
+        tft.drawString("Received:", tft.width() / 2, tft.height() / 2 - 20);
+        tft.drawString(received, tft.width() / 2, tft.height() / 2);
+        delay(3000);
+    }
+}
